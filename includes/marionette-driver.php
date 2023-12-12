@@ -27,7 +27,7 @@ class MarionetteDriver {
 
   //socket timeout in seconds.
   //this timout is important since it takes time to load some urls fully
-  private int $socketTimeout = 10;
+  private int $socketTimeout = 30;
 
   private string $readErrorStr = '';
   private bool $isConnected = false;
@@ -108,7 +108,7 @@ class MarionetteDriver {
     }while($char != ':' && $char !== false);
 
     if($char != ':') {
-      $this->setError('Failed to find response size: ' . $sizeStr);
+      $this->setError('Failed to find message response size: ' . $sizeStr);
     }else{
       if(!preg_match('/^[0-9]+$/', $sizeStr)) {
         $this->setError('Failed response size is not numeric: ' . $sizeStr);
@@ -459,6 +459,52 @@ class MarionetteDriver {
     }
 
     $rtn = ($this->executeScript($script,$args) === null) ? false : true;
+
+    return $rtn;
+  }
+
+  /**
+   * Get data in browser local storage
+   *
+   * @return array|null Array on success or null on fail
+   */
+  public function getLocalStorage() : ?array {
+
+    $script = "var rtnArr={};" . 
+              "Object.keys(localStorage).map(function(key) {" . 
+              "  rtnArr[key] = localStorage.getItem(key);" . 
+              "});" . 
+              "return JSON.stringify(rtnArr);";
+
+    $rtnValues = $this->executeScript($script);
+    if($rtnValues === NULL || empty($rtnValues['value']) ) {
+      $this->setError('Failed to get local storage parameters');
+    }else{
+
+      $jsonArr = json_decode($rtnValues['value'],true);
+
+      if($jsonArr === null) {
+        $this->setError('Failed to decode local storage json string: ' . $jsonStr);
+      }else{
+        $rtn = $jsonArr;
+      }
+
+    }
+
+    return $rtn;
+  }
+
+  /**
+   * Clear/delete all data in browser local storage (for current site)
+   *
+   * @return bool True on success or false on fail
+   */
+  public function clearLocalStorage() :bool {
+    $rtn = false;
+
+    $script = "localStorage.clear();";
+
+    $rtn = ($this->executeScript($script) === null) ? false : true;
 
     return $rtn;
   }

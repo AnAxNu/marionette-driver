@@ -1,4 +1,5 @@
 <?php
+require_once(__DIR__ . '/marionette-driver-message.php');
 
 /**
  * Marionette driver
@@ -15,15 +16,9 @@ class MarionetteDriver {
   private const DEFAULT_HOST = 'localhost';
   private const DEFAULT_PORT = 2828;
 
-  private const WEBDRIVER_EXECUTE_SCRIPT = 'WebDriver:ExecuteScript';
-  private const WEBDRIVER_NAVIGATE = 'WebDriver:Navigate';
-  private const WEBDRIVER_NEW_SESSION = 'WebDriver:NewSession';
-  private const WEBDRIVER_FIND_ELEMENT = 'WebDriver:FindElement';
-
   private ?string $host = null;
   private ?int $port = null;
   private $socket = null;
-  private $msgId = 1;
 
   //socket timeout in seconds.
   //this timout is important since it takes time to load some urls fully
@@ -59,7 +54,7 @@ class MarionetteDriver {
    * @return void
    */
   protected function setError(string $errStr) {
-    echo('MarionetteDriver error: ' . $errStr . "\n");
+    echo(get_class($this) . ' error: ' . $errStr . "\n");
   }
 
   /**
@@ -87,12 +82,9 @@ class MarionetteDriver {
   /**
    * Read marionette message from browser
    *
-   * @param bool $isInitMsg If the expected message is the init message (the first message),
-   *                        since this message is special.
-   *
-   * @return array|null Array on success or null on fail
+   * @return MarionetteDriverMessageResponse|null MarionetteDriverMessageResponse on success or null on fail
    */
-  protected function readMessage(bool $isInitMsg=false) :?array {
+  protected function readMessage() :?MarionetteDriverMessageResponse {
     $rtn = null;
 
     $msgSize=0;
@@ -117,54 +109,11 @@ class MarionetteDriver {
         //read rest of message
         $msgJson = fread($this->socket,$msgSize);
 
-        $msgArr = json_decode($msgJson,true);
-
-        if($msgArr === null) {
-          $this->setError('Failed to decode message json string: ' . $msgJson);
-        }else{
-
-          if($isInitMsg === true) {
-            //init message (first message recived) has different format
-            $rtn=$msgArr;
-          }else{
-
-            //check if any error is set in the message
-
-            if(isset($msgArr[2]) && ($msgArr[2] !== null)) {
-
-              $errArr = [];
-      
-              if(!empty($msgArr[2]['error'])) {
-                $errArr[] = $msgArr[2]['error'] . '.';
-              }
-              if(!empty($msgArr[2]['message'])) {
-                $errArr[] = $msgArr[2]['message'] . '.';
-              }
-      
-              $errStr = 'Unknown message error';
-              if(!empty($errArr)) {
-                $errStr = implode(' -> ', $errArr);
-              }
-      
-              $this->readErrorStr = $errorStr;
-              $this->setError('Read message contained an error: ' . $errorStr);
-            }else{
-              //return value part of the message
-              $rtn = $msgArr[3];
-            }
-
-          }
-
-        }
-
-
-        
+        $rtn = new MarionetteDriverMessageResponse($msgJson);
       }
     }
 
     //check for timeout while reading data
-    //note: unclear if we still got the data or not since this will happen if $msgSize is calculated wrong
-    //todo: look into this
     $info = stream_get_meta_data($this->socket);
     if($info['timed_out'] === true) {
       $this->setError('Timeout occured while reading message');
@@ -234,14 +183,14 @@ class MarionetteDriver {
     $msgArr['capabilities'] = ['pageLoadStrategy' => 'normal'];
 
     //send request
-    if( $this->sendMessage(self::WEBDRIVER_NEW_SESSION,$msgArr) !== null) {
+    if( $this->sendMessage(MarionetteDriverMessageRequest::WEBDRIVER_NEW_SESSION,$msgArr) !== null) {
       //read request answer
       $msg = $this->readMessage();
 
-      if(empty($msg['sessionId'])) {
-        $this->setError('Failed to get sessionId out of message: ' . print_r($msg,true));
+      if(empty($msg->data()['sessionId'])) {
+        $this->setError('Failed to get sessionId out of message: ' . $msg->getError());
       }else{
-        $rtn = $msg['sessionId'];
+        $rtn = $msg->data()['sessionId'];
       }
 
     }
@@ -262,17 +211,18 @@ class MarionetteDriver {
     $msgArr=[];
     $msgArr['url'] = $url;
     
-    if( $this->sendMessage(self::WEBDRIVER_NAVIGATE,$msgArr) === null) {
+    if( $this->sendMessage(MarionetteDriverMessageRequest::WEBDRIVER_NAVIGATE,$msgArr) === null) {
       $this->setError('Failed to navigate to url: ' . $url);
     }else{
 
       //read response message that will arrive when url has been loaded
       $msg = $this->readMessage();
-      if(empty($msg)) {
-        $this->setError('Failed to read post navigateToUrl message');
+      if(empty($msg->data())) {
+        $this->setError('Failed to read post navigateToUrl message: ' . $msg->getError());
       }else{
         $rtn = true;
       }
+
     }
 
     return $rtn;
@@ -314,13 +264,13 @@ class MarionetteDriver {
     $msgArr['using'] = 'id';
     $msgArr['value'] = 'particles';
 
-    if( $this->sendMessage(self::WEBDRIVER_FIND_ELEMENT,$msgArr) === null) {
+    if( $this->sendMessage(MarionetteDriverMessageRequest::WEBDRIVER_FIND_ELEMENT,$msgArr) === null) {
       $this->setError('Failed to find element: ' . $msg);
     }else{
 
       $msg = $this->readMessage();
-      if(empty($msg)) {
-        $this->setError('Failed to read post findElement message');
+      if(empty($msg->data())) {
+        $this->setError('Failed to read post findElement message: ' . $msg->getError());
       }else{
         print_r($msg);
         $rtn = true;
@@ -342,7 +292,10 @@ class MarionetteDriver {
     $rtn = null;
     $msgId = 0;
 
-    $msgJson = $this->createMessage($cmd,$msgArr,$msgId);
+    $msg = new MarionetteDriverMessageRequest();
+    $msgJson = $msg->encode($cmd,$msgArr);
+
+    //$msgJson = $this->createMessage($cmd,$msgArr,$msgId);
 
     if($msgJson !== null) {
 
@@ -350,7 +303,7 @@ class MarionetteDriver {
       if(fputs($this->socket,$msgStr) === false) {
         $this->setError('Failed to send message: ' . $msgStr);
       }else{
-        $rtn = $msgId;
+        $rtn = $msg->getUsedId();
       }
 
     }
@@ -401,9 +354,9 @@ class MarionetteDriver {
    * @param string $script Script string to be sent
    * @param array  $args Arguments to be passed along
    *
-   * @return array|null Any data that was sent back, or an empty array, on success or null on fail
+   * @return MarionetteDriverMessageResponse|null Any data that was sent back, on success or null on fail
    */
-  public function executeScript(string $script, array $args = []) : ?array {
+  public function executeScript(string $script, array $args = []) : ?MarionetteDriverMessageResponse {
     $rtn = null;
     
     $msgArr = [];
@@ -411,13 +364,13 @@ class MarionetteDriver {
     $msgArr['args'] = $args;
     $msgArr['scriptTimeout'] = 10;
 
-    if( $this->sendMessage(self::WEBDRIVER_EXECUTE_SCRIPT,$msgArr) === null) {
+    if( $this->sendMessage(MarionetteDriverMessageRequest::WEBDRIVER_EXECUTE_SCRIPT,$msgArr) === null) {
       $this->setError('Failed to execute script: ' . print_r($msgArr, true));
     }else{
 
       $msg = $this->readMessage();
-      if(empty($msg)) {
-        $this->setError('Failed to read post execute script message');
+      if(empty($msg->data())) {
+        $this->setError('Failed to read post execute script message: ' . $msg->getError());
       }else{
         $rtn = $msg;
       }
@@ -469,6 +422,7 @@ class MarionetteDriver {
    * @return array|null Array on success or null on fail
    */
   public function getLocalStorage() : ?array {
+    $rtn = null;
 
     $script = "var rtnArr={};" . 
               "Object.keys(localStorage).map(function(key) {" . 
@@ -476,17 +430,19 @@ class MarionetteDriver {
               "});" . 
               "return JSON.stringify(rtnArr);";
 
-    $rtnValues = $this->executeScript($script);
-    if($rtnValues === NULL || empty($rtnValues['value']) ) {
+    $msg = $this->executeScript($script);
+    if(empty($msg) || empty($msg->data()) ) {
       $this->setError('Failed to get local storage parameters');
     }else{
 
-      $jsonArr = json_decode($rtnValues['value'],true);
+      if(!empty($msg->data()['value'])) {
+        $jsonArr = json_decode($msg->data()['value'],true);
 
-      if($jsonArr === null) {
-        $this->setError('Failed to decode local storage json string: ' . $jsonStr);
-      }else{
-        $rtn = $jsonArr;
+        if($jsonArr === null) {
+          $this->setError('Failed to decode local storage json string: ' . $jsonStr);
+        }else{
+          $rtn = $jsonArr;
+        }
       }
 
     }

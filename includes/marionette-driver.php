@@ -353,10 +353,11 @@ class MarionetteDriver {
    *
    * @param string $script Script string to be sent
    * @param array  $args Arguments to be passed along
+   * @param bool  $onlyReturnValue If only return value from executed script
    *
-   * @return MarionetteDriverMessageResponse|null Any data that was sent back, on success or null on fail
+   * @return array|null Any data that was sent back, on success or null on fail
    */
-  public function executeScript(string $script, array $args = []) : ?MarionetteDriverMessageResponse {
+  public function executeScript(string $script, array $args = []) : ?array {
     $rtn = null;
     
     $msgArr = [];
@@ -372,7 +373,7 @@ class MarionetteDriver {
       if(empty($msg->data())) {
         $this->setError('Failed to read post execute script message: ' . $msg->getError());
       }else{
-        $rtn = $msg;
+        $rtn = $msg->data();
       }
 
     }
